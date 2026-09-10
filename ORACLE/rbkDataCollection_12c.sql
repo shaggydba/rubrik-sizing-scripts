@@ -1,5 +1,18 @@
 REM Oracle Data Collection Script
-REM Version: 2.1
+REM Version: 2.2
+REM
+REM Version 2.2 Updates (2026-09-10):
+REM - Fixed dbSizeTB returning the same (wrong) value for every PDB in a CDB. It was built on
+REM   plain dba_segments, which is not container-spanning -- queried from root, every row it
+REM   returns is tagged with root's own con_id, so a PDB's con_id filter matched zero rows and
+REM   fell back to the null-coalesce 0. Switched to containers(cdb_segments), the properly
+REM   container-aware view, matching the pattern already used for every other DBA_-view-based
+REM   per-PDB query in this script (encryptedDataSizeTB, biggestBigfileGB, etc).
+REM - dailyChangeRate's denominator switched from allocated space (v$datafile) to actual used
+REM   space (cdb_segments), so it now reflects the pct of real data that changes daily instead
+REM   of pct of allocated-but-possibly-empty space. allocated_dbSizeTB's v$datafile query is
+REM   now also wrapped in CONTAINERS() for consistency/defense, though v$datafile (unlike
+REM   dba_segments) is reliably container-aware from root without it.
 REM
 REM Version 2.1 Updates (2026-09-09):
 REM - Adds one rollup row per CDB representing the whole database as a single entity:
@@ -160,15 +173,16 @@ SET dNFSenabled = (select decode(count(*), 0, 'NO', 'YES') from v$dnfs_servers)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance);
 
--- v$datafile is container-aware
+-- cdb_segments is inherently container-aware; containers() around it and around v$datafile
+-- below is defensive, matching the pattern used for every other DBA_-view-based query
 UPDATE rubrikDataCollection rbk
-SET dbSizeTB = (select round(sum(bytes)/1024/1024/1024/1024,6) bytes from dba_segments where con_id=rbk.con_id group by con_id)
+SET dbSizeTB = (select round(sum(bytes)/1024/1024/1024/1024,6) bytes from containers(cdb_segments) where con_id=rbk.con_id group by con_id)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
 UPDATE rubrikDataCollection rbk
-SET allocated_dbSizeTB = (select round(sum(bytes)/1024/1024/1024/1024,6) bytes from v$datafile where con_id=rbk.con_id group by con_id)
+SET allocated_dbSizeTB = (select round(sum(bytes)/1024/1024/1024/1024,6) bytes from containers(v$datafile) where con_id=rbk.con_id group by con_id)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
@@ -293,10 +307,13 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and bigfileDataSizeGB is null;
 
--- v$datafile and v$archived_log are container-aware (no need for container clause)
+-- cdb_segments and v$archived_log are container-aware (no need for container clause)
 -- 20220310 smcelhinney removing division by 100 from dailyChangeRate as it negatively skews change rate
+-- 20230321 changed the denominator from allocated space (v$datafile) to actual used space
+-- (cdb_segments), so this reflects the pct of real data that changes daily, not allocated
+-- space that may never be touched -- smcelhinney
 UPDATE rubrikDataCollection rbk
-SET dailyChangeRate = (select dailyChangeRate from (select dbf.con_id, round((avg(redo_size)/sum(dbf.bytes)),8) dailyChangeRate from containers(v$datafile) dbf, (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from containers(v$archived_log) where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by dbf.con_id) where con_id=rbk.con_id)
+SET dailyChangeRate = (select dailyChangeRate from (select sgmt.con_id, round((avg(redo_size)/sum(sgmt.bytes)),8) dailyChangeRate from containers(cdb_segments) sgmt, (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from containers(v$archived_log) where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by sgmt.con_id) where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;

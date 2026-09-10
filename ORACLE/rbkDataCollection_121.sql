@@ -1,5 +1,15 @@
 REM Oracle Data Collection Script
-REM Version: 2.1
+REM Version: 2.2
+REM
+REM Version 2.2 Updates (2026-09-10):
+REM - Fixed dbSizeTB returning the same (wrong) value for every PDB in a CDB. It was built on
+REM   plain dba_segments, which is not container-spanning -- queried from root, every row it
+REM   returns is tagged with root's own con_id, so a PDB's con_id filter matched zero rows and
+REM   fell back to the null-coalesce 0. Switched to cdb_segments, which is inherently
+REM   container-aware (CONTAINERS() itself is not available until 12.2, so it is not used here).
+REM - dailyChangeRate's denominator switched from allocated space (v$datafile) to actual used
+REM   space (cdb_segments), so it now reflects the pct of real data that changes daily instead
+REM   of pct of allocated-but-possibly-empty space.
 REM
 REM Version 2.1 Updates (2026-09-09):
 REM - Adds one rollup row per CDB representing the whole database as a single entity:
@@ -160,9 +170,10 @@ SET dNFSenabled = (select decode(count(*), 0, 'NO', 'YES') from v$dnfs_servers)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance);
 
--- v$datafile is container-aware
+-- cdb_segments and v$datafile are both inherently container-aware in 12.1; CONTAINERS() is
+-- not available until 12.2, so neither is wrapped in it here
 UPDATE rubrikDataCollection rbk
-SET dbSizeTB = (select round(sum(bytes)/1024/1024/1024/1024,6) bytes from dba_segments where con_id=rbk.con_id group by con_id)
+SET dbSizeTB = (select round(sum(bytes)/1024/1024/1024/1024,6) bytes from cdb_segments where con_id=rbk.con_id group by con_id)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
@@ -293,10 +304,13 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and bigfileDataSizeGB is null;
 
--- v$datafile and v$archived_log are container-aware (no need for container clause)
+-- cdb_segments and v$archived_log are container-aware (no need for container clause)
 -- 20220310 smcelhinney removing division by 100 from dailyChangeRate as it negatively skews change rate
+-- 20230321 changed the denominator from allocated space (v$datafile) to actual used space
+-- (cdb_segments), so this reflects the pct of real data that changes daily, not allocated
+-- space that may never be touched -- smcelhinney
 UPDATE rubrikDataCollection rbk
-SET dailyChangeRate = (select dailyChangeRate from (select dbf.con_id, round((avg(redo_size)/sum(dbf.bytes)),8) dailyChangeRate from v$datafile dbf, (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by dbf.con_id) where con_id=rbk.con_id)
+SET dailyChangeRate = (select dailyChangeRate from (select sgmt.con_id, round((avg(redo_size)/sum(sgmt.bytes)),8) dailyChangeRate from cdb_segments sgmt, (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by sgmt.con_id) where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;

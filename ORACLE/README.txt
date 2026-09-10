@@ -2,7 +2,7 @@
 #
 # Rubrik Data Collection for Oracle Tooling
 #
-# Version: 2.1
+# Version: 2.2
 #
 # Developer: Shawn McElhinney
 #
@@ -29,6 +29,22 @@
 # 3 - Execute dataCollector.sh from an interactive terminal session (not cron, or ssh without a pty) and provide the SYSTEM password when prompted for each database listed in collectionInput.lst. The password is read directly from the terminal and is never passed on a command line or logged.
 #
 # 4 - Compress the resulting rbkDiscovery.csv & work with your Rubrik Sales Engineer to transfer the file to them via the most secure mechanism available.
+#
+##########
+#
+# Version 2.2 Updates (2026-09-10):
+#
+# - Fixed DBSIZETB returning the same (wrong) value for every PDB in a CDB. It was built on
+#   plain dba_segments, which is not container-spanning -- queried from root, every row it
+#   returns is tagged with root's own con_id, so a PDB's con_id filter matched zero rows and
+#   fell back to the null-coalesce 0. Switched to cdb_segments (wrapped in CONTAINERS() where
+#   that's available -- not in the 12.1 script, since CONTAINERS() isn't available until
+#   12.2), matching the pattern already used for every other DBA_-view-based per-PDB query.
+# - DAILYCHANGERATE's denominator switched from allocated space (v$datafile) to actual used
+#   space (cdb_segments), so it now reflects the pct of real data that changes daily instead
+#   of pct of allocated-but-possibly-empty space. ALLOCATED_DBSIZETB's v$datafile query is
+#   also now wrapped in CONTAINERS() (where available) for consistency/defense, though
+#   v$datafile (unlike dba_segments) is reliably container-aware from root without it.
 #
 ##########
 #
