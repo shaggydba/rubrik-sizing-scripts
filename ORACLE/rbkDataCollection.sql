@@ -1,5 +1,15 @@
 REM Oracle Data Collection Script
-REM Version: 2.0
+REM Version: 2.1
+REM
+REM Version 2.1 Updates (2026-09-09):
+REM - Adds one rollup row per CDB representing the whole database as a single entity:
+REM   con_id=0, conName is just the CDB name (the root's own name without ".CDB$ROOT").
+REM   Storage fields are summed across the real PDBs only (excluding CDB$ROOT and
+REM   PDB$SEED); dailyRedoSizeTB is copied from the root rather than summed, since the
+REM   root already holds the CDB-wide redo total; biggestBigfileGB/GoldenGate/
+REM   exadataEnabled use MAX() across root+PDBs; every other column is copied from the
+REM   root. This makes con_id=0 consistently mean "one row per database" for both CDBs
+REM   and standalone (11g-style) databases.
 REM
 REM Version 2.0 Updates (2026-09-03):
 REM - Output field delimiter changed from comma to a tab character (chr(9)); some collected
@@ -375,6 +385,59 @@ update rubrikDataCollection rbk set conName=(select name ||'.CDB$ROOT'from v$dat
 update rubrikDataCollection rbk set conName=(select name ||'.PDB$SEED'from v$database) where conName='PDB$SEED';
 -- update remaining pdbs to append CDB name so pdb/cdb relationships are not lost in the csv
 update rubrikDataCollection rbk set conName=(select name ||'.' from v$database)||conName where con_id>2;
+
+-- add a rollup row representing the whole CDB as a single "database": con_id=0, conName is
+-- just the CDB name (the root's own conName without the ".CDB$ROOT" suffix). Storage fields
+-- are summed across the real PDBs only (con_id>2, excluding CDB$ROOT and PDB$SEED) since those
+-- are additive per container. dailyRedoSizeTB is copied from the root (con_id=1) rather than
+-- summed, since the root row already holds the CDB-wide redo total -- summing the PDBs into it
+-- too would double-count. biggestBigfileGB, GoldenGate, and exadataEnabled can each vary by
+-- container, so those use MAX() across root+PDBs to reflect "true if true anywhere in the CDB".
+-- Every other column is a constant instance-level attribute, so it is copied from the root.
+insert into rubrikDataCollection
+(con_id, conName, dbSizeTB, allocated_dbSizeTB, encryptedDataSizeTB, datafileCount,
+ tablespaceCount, encryptedTablespaceCount, bigfileTablespaceCount, bigfileDataSizeGB,
+ logfileCount, tempfileCount, dailyRedoSizeTB, biggestBigfileGB, GoldenGate, exadataEnabled,
+ hostName, instName, dbVersion, dbEdition, platformName, dbName, dbUniqueName, dbID,
+ flashbackEnabled, archiveLogEnabled, spfile, patchLevel, cpuCount, blockSize, racEnabled,
+ sgaMaxSizeGB, sgaTargetGB, pgaAggregateTargetGB, physMemoryGB, dNFSenabled, bctEnabled,
+ LogArchiveConfig, ArchiveLagTarget)
+select 0,
+       (select name from v$database),
+       (select sum(dbSizeTB) from rubrikDataCollection where con_id>2),
+       (select sum(allocated_dbSizeTB) from rubrikDataCollection where con_id>2),
+       (select sum(encryptedDataSizeTB) from rubrikDataCollection where con_id>2),
+       (select sum(datafileCount) from rubrikDataCollection where con_id>2),
+       (select sum(tablespaceCount) from rubrikDataCollection where con_id>2),
+       (select sum(encryptedTablespaceCount) from rubrikDataCollection where con_id>2),
+       (select sum(bigfileTablespaceCount) from rubrikDataCollection where con_id>2),
+       (select sum(bigfileDataSizeGB) from rubrikDataCollection where con_id>2),
+       (select sum(logfileCount) from rubrikDataCollection where con_id>2),
+       (select sum(tempfileCount) from rubrikDataCollection where con_id>2),
+       dailyRedoSizeTB,
+       (select max(biggestBigfileGB) from rubrikDataCollection where con_id=1 or con_id>2),
+       (select max(GoldenGate) from rubrikDataCollection where con_id=1 or con_id>2),
+       (select max(exadataEnabled) from rubrikDataCollection where con_id=1 or con_id>2),
+       hostName, instName, dbVersion, dbEdition, platformName, dbName, dbUniqueName, dbID,
+       flashbackEnabled, archiveLogEnabled, spfile, patchLevel, cpuCount, blockSize,
+       racEnabled, sgaMaxSizeGB, sgaTargetGB, pgaAggregateTargetGB, physMemoryGB,
+       dNFSenabled, bctEnabled, LogArchiveConfig, ArchiveLagTarget
+from rubrikDataCollection
+where con_id=1;
+
+-- a CDB with no PDBs plugged in yet (only CDB$ROOT and PDB$SEED) makes every sum() above
+-- aggregate an empty set, which returns NULL rather than 0 -- coalesce those to 0 to match
+-- the same null-handling convention used for every other summed column in this script
+update rubrikDataCollection rbk set dbSizeTB=0 where con_id=0 and dbSizeTB is null;
+update rubrikDataCollection rbk set allocated_dbSizeTB=0 where con_id=0 and allocated_dbSizeTB is null;
+update rubrikDataCollection rbk set encryptedDataSizeTB=0 where con_id=0 and encryptedDataSizeTB is null;
+update rubrikDataCollection rbk set datafileCount=0 where con_id=0 and datafileCount is null;
+update rubrikDataCollection rbk set tablespaceCount=0 where con_id=0 and tablespaceCount is null;
+update rubrikDataCollection rbk set encryptedTablespaceCount=0 where con_id=0 and encryptedTablespaceCount is null;
+update rubrikDataCollection rbk set bigfileTablespaceCount=0 where con_id=0 and bigfileTablespaceCount is null;
+update rubrikDataCollection rbk set bigfileDataSizeGB=0 where con_id=0 and bigfileDataSizeGB is null;
+update rubrikDataCollection rbk set logfileCount=0 where con_id=0 and logfileCount is null;
+update rubrikDataCollection rbk set tempfileCount=0 where con_id=0 and tempfileCount is null;
 
 commit;
 
