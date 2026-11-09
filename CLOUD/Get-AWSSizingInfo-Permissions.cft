@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create a cross-account role to run Rubrik's Sizing Script using StackSets
+
+Parameters:
+  ScriptAWSAccountId:
+    Type: String
+    Description: The AWS account ID where the Rubrik Sizing Script is run from.
+    AllowedPattern: '^\d{12}$'
+    ConstraintDescription: 'The Script AWS Account ID must be a 12-digit number.'
+
+  RoleName:
+    Type: String
+    Default: 'RubrikSizingScripts'
+    Description: Name of the AWS IAM role to create
+    AllowedPattern: '^[a-zA-Z0-9+=,.@_-]+$'
+    ConstraintDescription: 'The role name can only contain alphanumeric characters and the following: +=,.@_-'
+
+Resources:
+  CrossAccountRole:
+    Type: 'AWS::IAM::Role'
+    Properties: 
+      RoleName: !Ref RoleName
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Principal: 
+              AWS: 
+                - !Sub 'arn:aws:iam::${ScriptAWSAccountId}:root'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'RubrikSizingScriptPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: 'VisualEditor0'
+                Effect: 'Allow'
+                Action:
+                  - 'backup:GetBackupPlan'
+                  - 'backup:GetBackupSelection'
+                  - 'backup:ListBackupPlans'
+                  - 'backup:ListBackupSelections'
+                  - 'backup:ListBackupVaults'
+                  - 'backup:ListRecoveryPointsByBackupVault'
+                  - 'ce:GetCostAndUsage'
+                  - 'ce:GetDimensionValues'
+                  - 'cloudwatch:GetMetricStatistics'
+                  - 'cloudwatch:ListMetrics'
+                  - 'dynamodb:DescribeContinuousBackups'
+                  - 'dynamodb:DescribeTable'
+                  - 'dynamodb:ListBackups'
+                  - 'dynamodb:ListTables'
+                  - 'ec2:DescribeImages'
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:DescribeRegions'
+                  - 'ec2:DescribeSnapshots'
+                  - 'ec2:DescribeVolumes'
+                  - 'ec2:DescribeVpcs'
+                  - 'eks:DescribeCluster'
+                  - 'eks:ListClusters'
+                  - 'eks:ListNodegroups'
+                  - 'elasticloadbalancing:DescribeLoadBalancers'
+                  - 'elasticloadbalancing:DescribeTags'
+                  - 'elasticfilesystem:DescribeFileSystems'
+                  - 'fsx:DescribeBackups'
+                  - 'fsx:DescribeFileSystems'
+                  - 'fsx:DescribeVolumes'
+                  - 'glue:GetDatabases'
+                  - 'glue:GetResourceTags'
+                  - 'glue:GetTables'
+                  - 'iam:ListAccountAliases'
+                  - 'iam:ListPolicies'
+                  - 'iam:ListRoles'
+                  - 'iam:ListUsers'
+                  - 'kms:Decrypt'
+                  - 'kms:DescribeKey'
+                  - 'kms:ListAliases'
+                  - 'kms:ListKeys'
+                  - 'organizations:ListAccounts'
+                  - 'rds:DescribeDBClusterSnapshots'
+                  - 'rds:DescribeDBClusters'
+                  - 'rds:DescribeDBInstances'
+                  - 'rds:DescribeDBSnapshots'
+                  - 'redshift:DescribeClusters'
+                  - 'redshift:DescribeClusterSnapshots'
+                  - 'route53:ListHostedZones'
+                  - 's3:GetBucketLocation'
+                  - 's3:ListAllMyBuckets'
+                  - 's3:GetBucketTagging'
+                  - 's3:GetObject'
+                  - 's3:ListStorageLensConfigurations'
+                  - 's3:GetStorageLensConfiguration'
+                  - 's3tables:GetTable'
+                  - 's3tables:GetTableData'
+                  - 's3tables:GetTableMaintenanceConfiguration'
+                  - 's3tables:GetTableMetadataLocation'
+                  - 's3tables:ListTableBuckets'
+                  - 's3tables:ListTables'
+                  - 's3tables:ListTagsForResource'
+                  - 'secretsmanager:ListSecrets'
+                  - 'sqs:ListQueues'
+                Resource: '*'
+
+Outputs:
+  RoleARN:
+    Description: The ARN of the created cross-account role
+    Value: !GetAtt CrossAccountRole.Arn

@@ -1,0 +1,593 @@
+# Cloud Sizing Scripts README
+
+This contains information about Rubrik scripts for collecting sizing information for resources across AWS, Azure, and GCP. Below you will find detailed instructions on setting up prerequisites, running the scripts, and understanding their functionalities, including the anonymization feature.
+
+## Table of Contents
+
+1. [Introduction](#introduction)
+2. [AWS](#aws)
+    - [Prerequisites](#aws-prerequisites)
+    - [Running the Script](#running-the-aws-script)
+3. [Azure](#azure)
+    - [Prerequisites](#azure-prerequisites)
+    - [Running the Script](#running-the-azure-script)
+4. [GCP](#gcp)
+    - [Prerequisites](#gcp-prerequisites)
+    - [Running the Script](#running-the-gcp-script)
+5. [Anonymization Feature](#anonymization-feature)
+6. [FAQ](#faq)
+
+---
+
+## Introduction
+
+This repository contains scripts designed to collect and report on cloud resources across AWS, Azure, and GCP. These scripts help gather essential sizing data which will be used for scaling and pricing Rubrik solutions.
+
+---
+
+## AWS
+
+### Authenticaition
+
+1. Use the local AWS profile (IAM user) to login to just one account.
+1. Use a list of local AWS profiles to login to and query multiple accounts.
+1. Use a cross account role with a list of AWS accounts that you provide to assume role into each account.
+1. Use a cross account role with an AWS Org and have the script automatically discover all of your accounts and query each one.
+1. Have the script query AWS SSO for a list of accounts. Each account will be accessed via the AWS SSO parameter set that is specified. 
+
+<Add examples>
+
+### AWS Prerequisites
+
+To run the AWS sizing script, ensure you have the following:
+
+- PowerShell 7.4.5 or higher
+- AWS PowerShell modules installed:
+- An AWS account with the necessary permissions.
+  - The following AWS permissions are required to run the script:
+      ```json
+      {
+          "Version": "2012-10-17",
+          "Statement": [
+              {
+                  "Sid": "VisualEditor0",
+                  "Effect": "Allow",
+                  "Action": [
+                      "backup:ListBackupPlans",
+                      "backup:ListBackupSelections",
+                      "backup:GetBackupPlan",
+                      "backup:GetBackupSelection",
+                      "ce:GetCostAndUsage",
+                      "cloudwatch:GetMetricStatistics",
+                      "cloudwatch:ListMetrics",
+                      "dynamodb:ListTables",
+                      "dynamodb:DescribeTable",
+                      "ec2:DescribeInstances",
+                      "ec2:DescribeRegions",
+                      "ec2:DescribeVolumes",
+                      "ec2:DescribeVpcs",
+                      "eks:DescribeCluster",
+                      "eks:ListClusters",
+                      "eks:ListNodegroups",
+                      "elasticloadbalancing:DescribeLoadBalancers",
+                      "elasticloadbalancing:DescribeTags",
+                      "elasticfilesystem:DescribeFileSystems",
+                      "fsx:DescribeFileSystems",
+                      "fsx:DescribeVolumes",
+                      "iam:ListAccountAliases",
+                      "iam:ListPolicies",
+                      "iam:ListRoles",
+                      "iam:ListUsers",
+                      "kms:DescribeKey",
+                      "kms:ListAliases",
+                      "kms:ListKeys",
+                      "organizations:ListAccounts",
+                      "rds:DescribeDBClusters",
+                      "rds:DescribeDBInstances",
+                      "route53:ListHostedZones",
+                      "s3:GetBucketLocation",
+                      "s3:ListAllMyBuckets",
+                      "s3:GetBucketTagging",
+                      "s3:ListStorageLensConfigurations",
+                      "s3:GetStorageLensConfiguration",
+                      "s3tables:ListTableBuckets",
+                      "s3tables:ListTables",
+                      "s3tables:GetTable",
+                      "s3tables:ListTagsForResource",
+                      "secretsmanager:ListSecrets",
+                      "sqs:ListQueues"
+                  ],
+                  "Resource": "*"
+              }
+          ]
+      }
+      ```
+    - These permissions can be installed in a cross account role by using the [Get-AWSSizingInfo-Permissions.cft](Get-AWSSizingInfo-Permissions.cft) CloudFormation template. This cross account role can be installed in multiple AWS accounts by using a [CloudFormation Stack Set](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/what-is-cfnstacksets.html).
+
+### AWS Backup capacity reporting (zero account-admin action required)
+
+The script's backup **capacity** reporting requires no account-admin action
+beyond granting the standard IAM permissions via the CloudFormation template
+above. Capacity is enumerated for every backup mechanism: AWS Backup recovery
+points, native EBS snapshots, AMIs, RDS DB/cluster snapshots, FSx native
+backups, DynamoDB on-demand backups + PITR, and Redshift snapshots.
+
+Cost reporting requires an additional opt-in: Cost Explorer must be enabled on
+the account (and, for org runs, linked-account billing access must be enabled
+at the payer). See the "Optional: Cost Explorer" subsection below.
+
+Each workload row carries ten source-agnostic backup columns:
+`ResourceArn`, `HasBackups`, `HasRecoveryPoints`, `BackupCount`,
+`BackupSources`, `LatestBackupDate`, `LatestBackupSize{GiB,TiB,GB,TB}`, and
+`BackupEnumerationTruncated`.
+
+#### Backup attribution semantics (three-axis model)
+
+| Flag | Source | Meaning |
+|---|---|---|
+| `InBackupPlan` | AWS Backup selection rules (`Resources`, `ListOfTags`, `Conditions`, `NotResources`) | **AWS Backup intent** — a currently-active selection rule covers this resource |
+| `HasRecoveryPoints` | RP enumeration | **AWS Backup evidence** — at least one leaf recovery point exists |
+| `HasBackups` | RP + native (EBS/AMI/RDS/FSx/DDB/Redshift) | **Any-mechanism evidence** — at least one backup of any kind exists |
+
+`LatestBackupSize*` columns are the **primary capacity inputs for Rubrik
+first-full sizing**. The legacy "Provisioned source size of … in AWS Backup
+plans" totals (printed to the console for backward compatibility with the
+underlying CSV columns and variable names) represent provisioned source size
+of in-plan resources, NOT actual backup capacity.
+
+#### Optional: Cost Explorer (for dollar figures only)
+
+Cost reporting is **secondary** and degrades gracefully. When Cost Explorer is
+not enabled (or linked-account billing access is disabled at the org payer),
+the script prints one yellow line per account explaining the cause and writes
+both cost CSVs as header-only. Capacity output is unaffected.
+
+To enable Cost Explorer: AWS Billing console → Cost Explorer → Launch
+(~24h backfill). For org runs, additionally enable Billing → Billing
+preferences → "Linked account access to billing data".
+
+Cost reporting issues two disjoint queries:
+
+| Captured by `SERVICE = "AWS Backup"` | Captured by `USAGE_TYPE` keyword match |
+|---|---|
+| S3, EFS, FSx OpenZFS, DynamoDB-advanced, EKS, Aurora DSQL, Timestream, SAP HANA on EC2, VMware, **all logically air-gapped vaults regardless of resource** | EBS, EC2 (AMI/image), RDS (non-advanced), Aurora (non-advanced), DocumentDB, Neptune, FSx Lustre/Windows/ONTAP, Storage Gateway, **Redshift**, **Redshift Serverless**, **DynamoDB-standard PITR** |
+
+The two CSVs (`aws_backup_costs-*.csv` and `aws_snapshot_storage_costs-*.csv`)
+never double-count. The combined upper bound is printed in the console
+summary; downstream tools join the two CSVs on `(account, month)` for the
+combined view.
+
+#### Latest-RP / latest-backup, not sum
+
+`BackupSizeInBytes` is the logical (full-equivalent) size of a recovery point.
+Summing N daily incrementals returns ~N × source size, which over-counts
+hugely. The script reports the **latest** backup per resource — that is the
+relevant number for Rubrik first-full sizing.
+
+#### Known size attribution edge cases
+
+- Aurora cluster snapshots and FSx Lustre full backups report **stored bytes**
+  rather than logical source size. The under-estimate is typically <20% and in
+  the conservative direction.
+- DDB PITR uses the current `TableSizeBytes` as an upper bound: over-estimates
+  recently-shrunk tables and under-estimates very write-heavy tables.
+
+#### New flags
+
+- `-SkipBackupCapacity`: skip the entire RP enumeration and all 5 native
+  collectors. Per-row backup columns still emit (defaults).
+- `-SkipBackupCosts`: skip both Cost Explorer cost cmdlets. Cost CSVs are
+  written header-only; capacity output is unaffected.
+- `-BackupRecoveryPointTimeoutMinutes <int>` (default 60): per-region time
+  budget for AWS Backup recovery-point enumeration. On expiry the region's RP
+  capacity becomes a lower bound and affected workload rows are flagged
+  `BackupEnumerationTruncated`.
+
+#### Memory and time scale
+
+The per-resource backup aggregate hash holds ~250 bytes per distinct
+`ResourceArn`. RP enumeration default budget is 60 min/region. Per-RP rows are
+flushed to a per-region scratch CSV in batches, but the in-memory per-RP list
+is also retained until the per-account merge runs, so total memory grows with
+the total RP count (default per-region time budget is the main bound). For
+accounts with millions of RPs, lower `-BackupRecoveryPointTimeoutMinutes`.
+
+### Running the AWS Script
+
+There are two options for running the AWS sizing script. It can run from the AWS Cloud Shell (easiest) or from a local laptop or server (more difficult). For very large environments where the script may run longer than 20-30 minutes, running the script on a laptop or server may be necessary. This is due to the Cloud Shell's default inactivity timeout. 
+
+To run the script from the AWS Cloud Shell do the following:
+
+1. Open [AWS Cloud Shell](https://docs.aws.amazon.com/cloudshell/latest/userguide/welcome.html) in an AWS account with a profile to run the script.
+1. Start PowerShell by running:
+    ```shell
+    pwsh
+    ```
+
+To run the script from a local laptop or server do the following:
+
+1. Verify that PowerShell v7.4.5 or higher is installed.
+1. Install the AWS modules for PowerShell with the following command:
+    ```powershell
+    Install-Module AWS.Tools.Common,AWS.Tools.EC2,AWS.Tools.S3,AWS.Tools.RDS,AWS.Tools.SecurityToken,AWS.Tools.Organizations,AWS.Tools.IdentityManagement,AWS.Tools.CloudWatch,AWS.Tools.ElasticFileSystem,AWS.Tools.ElasticLoadBalancing,AWS.Tools.ElasticLoadBalancingV2,AWS.Tools.SSO,AWS.Tools.SSOOIDC,AWS.Tools.FSX,AWS.Tools.Backup,AWS.Tools.CostExplorer,AWS.Tools.DynamoDBv2,AWS.Tools.Route53,AWS.Tools.SQS,AWS.Tools.SecretsManager,AWS.Tools.KeyManagementService,AWS.Tools.EKS,AWS.Tools.Redshift
+
+    ```
+1. Ensure AWS credentials are set up by using the `Set-AWSCredential` command. For example:
+    ```powershell
+    Set-AWSCredential -AccessKey 'YourAccessKey' -SecretKey 'YourSecretKey' -Region 'YourRegion'
+    ```
+
+In both cases run the sizing script with the appropriate options and send the data back to Rubrik.
+1. Execute the script:
+    ```powershell
+    .\Get-AWSSizingInfo.ps1
+    ```
+1. The script will output a summary to the console and create a zip file with CSV and JSON files (including `aws_s3_tables_info-<timestamp>.csv` for S3 Tables inventory), along with a LOG of the console output.
+1. Please download the ZIP file and send it to your Rubrik representative.
+
+### Aurora DB Processing
+
+Aurora clusters are emitted as one row per cluster (Aurora-engine RDS instances are skipped at the RDS instance loop
+so the cluster row is the canonical Aurora entry). Cluster-level storage is reported from the CloudWatch
+`VolumeBytesUsed` metric. Each cluster row carries:
+
+- `DBClusterIdentifier` — also populated on non-Aurora RDS instance rows for clustered engines (e.g. RDS Multi-AZ
+  clusters); blank for standalone instances.
+- `EngineMode` — populated only on Aurora cluster rows. `serverless` identifies Aurora Serverless v1;
+  `provisioned` covers both standard Aurora and Aurora Serverless v2 (the underlying API does not
+  distinguish v2 from standard Aurora at the cluster level — check the instance class / scaling
+  configuration in the AWS console if v2-vs-standard matters). Blank on standalone RDS instance rows.
+- `InstanceCount` — number of member instances in the cluster, sourced from `DBClusterMembers.Count` (0 when the
+  cluster reports no members, e.g. Aurora Serverless v1). Standalone RDS instance rows always carry
+  `InstanceCount = 1` so downstream consumers can sum this column across every RDS row to recover the total
+  per-instance count without special-casing Aurora vs non-Aurora rows.
+
+All `Tag:` columns are emitted contiguously at the end of the row (after `InstanceCount`).
+
+### S3 Storage Lens for Current Version Storage Metrics
+
+The script can collect **CurrentVersionStorageBytes** and **CurrentVersionObjectCount** metrics for S3 buckets. These show the size and number of current-version objects per storage class. This data is useful for understanding how much storage and how many objects are current versions vs. previous versions in versioned buckets.
+
+**To enable this feature:**
+
+1. **Create an S3 Storage Lens configuration** in your AWS account:
+   - Go to **S3** → **Storage Lens** → **Dashboards** → **Create dashboard**
+   - Give it a name (e.g., `sizing-dashboard`)
+   - Under **Metrics export**, enable **CloudWatch publishing**
+   - Save the configuration
+
+2. **Wait for metrics to be published:**
+   - Storage Lens metrics are published **once per day**
+   - It can take **up to 48 hours** for the first metrics to appear in CloudWatch after enabling
+
+**Cost considerations:**
+- S3 Storage Lens **free metrics** are available at no additional cost
+- **CloudWatch publishing** of Storage Lens metrics incurs CloudWatch metrics charges:
+  - CloudWatch custom metrics: ~$0.30 per metric per month (first 10,000 metrics)
+  - Storage Lens publishes multiple metrics per bucket per storage class
+  - For large environments with many buckets, this can add up
+- Review [AWS CloudWatch pricing](https://aws.amazon.com/cloudwatch/pricing/) and [S3 Storage Lens pricing](https://aws.amazon.com/s3/pricing/) for current rates
+
+If Storage Lens with CloudWatch publishing is not configured, the script will continue to run but these fields will not be populated.
+
+### Troubleshooting
+
+#### Explicit deny in a service control policy
+
+- Problem:
+
+  When running the script against AWS SSO or an AWS Org the following type of error may occur:
+
+  ```
+  Failed to get Backup Plans Info for region us-east-2 in account 123456789012
+  Error: User: arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_AdministratorAccess_1234567890abcdef/firstname.lastname@company.com is not authorized to perform: backup:ListBackupPlans with an explicit deny in a service control policy
+  ```
+
+- Solution:
+
+  An AWS service control policy is in place that prevents running commands in the region that is listed. Use the -Regions parameter to restrict the script to only run in regions that are supported by the organization. 
+
+
+#### Invalid grant provided
+
+- Problem:
+
+When using AWS SSO the following error may occur while authorizing the script in SSO:
+
+```
+Allow access to your data? invalid_grant
+Invalid grant provided
+```
+
+- Solution:
+
+AWS SSO is not being accessed in the correct region. By default, the script uses `us-east-1` to communicate with AWS SSO. To look up the proper region for AWS SSO select `Access Keys` next to the Parameter Set that is being used. The next screen will specify a region where the access keys can be used. This is the region for the AWS SSO. Next specify the `-SSORegion` flag and use the region that was discovered. 
+
+---
+
+## Azure
+
+### Azure Prerequisites
+
+To run the Azure sizing script, ensure you have the following:
+
+- Azure AD account with "Reader" and "Reader and Data Access" roles on each subscription.
+- PowerShell 7 installed if running locally.
+- Required Azure PowerShell modules installed:
+    ```powershell
+    Install-Module Az.Accounts,Az.Compute,Az.Storage,Az.Sql,Az.SqlVirtualMachine,Az.ResourceGraph,Az.Monitor,Az.Resources,Az.RecoveryServices,Az.CostManagement,Az.CosmosDB
+    ```
+- Optional modules. If one is missing, the script prints a warning and skips only that collection:
+    ```powershell
+    # Azure PostgreSQL Flexible Server inventory
+    Install-Module Az.PostgreSqlFlexibleServer
+    # Azure Backup for Blobs and PostgreSQL (stored in Backup Vaults, not Recovery Services Vaults)
+    Install-Module Az.DataProtection
+    ```
+- PostgreSQL `SizeBucket` says which of the two sizer size ranges a server's provisioned size falls in: `Under 1 TiB`
+  or `1 TiB and over` (1 TiB is 1024 GiB, and a server of exactly 1 TiB is in the larger range). It is blank when Azure
+  returns no size.
+- PostgreSQL utilized size (`Utilized_Bytes` and the `Utilized_*` columns) is the peak `storage_used` value over the
+  last 24 hours, not the latest value. It is blank when Azure Monitor returns no data, for example for a stopped
+  server.
+
+### Running the Azure Script
+
+1. **From Azure Cloud Shell (preferred):**
+    - Login to the Azure portal and open [Azure Cloud Shell](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/classic?source=recommendations&tabs=azurecli).
+    - Start Powershell by running
+        ```shell
+        pwsh
+        ```
+    - Install the necessary module not pre-installed in Azure Cloud Shell:
+        ```powershell
+        Install-Module Az.CostManagement
+        ```
+    - Optionally, to report PostgreSQL Flexible Servers and Azure Backup for Blobs and PostgreSQL:
+        ```powershell
+        Install-Module Az.PostgreSqlFlexibleServer
+        Install-Module Az.DataProtection
+        ```
+    - Upload and run the script:
+        ```powershell
+        .\Get-AzureSizingInfo.ps1
+        ```
+
+2. **From a local system:**
+    - Install PowerShell 7 and necessary Azure modules as mentioned above.
+    - Login to Azure:
+        ```powershell
+        Connect-AzAccount
+        ```
+    - Run the script:
+        ```powershell
+        .\Get-AzureSizingInfo.ps1
+        ```
+
+4. The script will output a summary to the console and create a zip file with CSV and JSON files, along with a LOG of the console output. Please download the ZIP file and send it to your Rubrik representative.
+
+**Output files:**
+- `azure_vmdisk_info-<timestamp>.csv` - Azure VM and Managed Disk information
+- `azure_sql_info-<timestamp>.csv` - Azure SQL Database information
+- `azure_mi_sql_info-<timestamp>.csv` - Azure SQL Managed Instance information
+- `azure_postgres_info-<timestamp>.csv` - Azure PostgreSQL Flexible Server information
+- `azure_storage_account_info-<timestamp>.csv` - Azure Storage Account information
+- `azure_file_share_info-<timestamp>.csv` - Azure File Share information
+- `azure_backup_vault_info-<timestamp>.csv` - Azure Backup Vault information
+- `azure_backup_data_protection_vaults-<timestamp>.csv` - Backup Vaults (Blob and PostgreSQL backup); needs `Az.DataProtection`
+- `azure_backup_data_protection_policies-<timestamp>.json` - Blob and PostgreSQL backup policies; needs `Az.DataProtection`
+- `azure_backup_data_protection_items-<timestamp>.csv` - Blob storage accounts and PostgreSQL servers protected by Azure Backup;
+  needs `Az.DataProtection`. One row per protected datasource. For database-level PostgreSQL backups there is one row per
+  database, all sharing the server's `DatasourceName`, with the database in `DatasourceDatabase`.
+- `azure_cosmos_db-<timestamp>.csv` - Azure CosmosDB information
+- `azure_aks_info-<timestamp>.csv` - Azure Kubernetes Service cluster information
+- `azure_sizing_summary-<timestamp>.csv` - Per-region capacity summary
+- `output_azure_<timestamp>.log` - Console output log
+
+**Backup columns on storage accounts, file shares and PostgreSQL servers:** `azure_storage_account_info`,
+`azure_file_share_info` and `azure_postgres_info` have `BackupPolicies` and `InBackupPolicy` columns, like the Azure VM file.
+- A **file share** is flagged when Azure Backup protects it (Recovery Services Vault, Azure Files).
+- A **storage account** is flagged when its Blob is protected by Azure Backup (Backup Vault, needs `Az.DataProtection`)
+  or any of its file shares is protected.
+- A **PostgreSQL Flexible Server** is flagged when a Backup Vault server-level backup instance points at it (needs
+  `Az.DataProtection`). A database-level backup item does not flag the server.
+- `BackupPolicies` lists the distinct policy names, comma separated, or `-` when there are none.
+- The columns stay `-` / `false` when `-SkipAzureBackup` is set. Blob and PostgreSQL protection also stay unflagged when
+  `Az.DataProtection` is not installed, so `false` there means "not found", not "confirmed unprotected".
+
+**Skip flags** (to speed up collection or skip services you don't need):
+- `-SkipAzureVMandManagedDisks` - skip VM and Managed Disk collection
+- `-SkipAzureSQLandMI` - skip Azure SQL and Managed Instance collection
+- `-SkipAzurePostgreSQL` - skip Azure PostgreSQL Flexible Server collection
+- `-SkipAzureStorageAccounts` - skip Storage Account and Blob collection
+- `-SkipAzureFiles` - skip Azure File Share collection
+- `-SkipAzureBackup` - skip Backup Vault, Policy, and Item collection (Recovery Services Vaults and Backup Vaults)
+- `-SkipAzureCosmosDB` - skip CosmosDB collection
+- `-SkipAKS` - skip Azure Kubernetes Service collection
+
+---
+
+## GCP
+
+### GCP Prerequisites
+
+To run the GCP sizing script, ensure you have the following:
+
+- GCP account with necessary IAM permissions:
+  - `compute.instances.list`
+  - `compute.disks.get`
+  - `compute.disks.list`
+  - `cloudsql.instances.list`
+  - `cloudsql.databases.list`
+  - `spanner.instances.list`
+  - `spanner.databases.list`
+  - `resourcemanager.projects.get`
+  - `resourcemanager.projects.list` (required for project discovery via `gcloud projects list` when running without `-Projects`/`-ProjectFile`)
+  - `serviceusage.services.list`
+- GCP Cloud SDK installed or use GCP Cloud Shell.
+- The following GCP APIs must be enabled on each project for full data collection:
+
+    | API | Data Collected | If Not Enabled |
+    |-----|---------------|----------------|
+    | Compute Engine API (`compute.googleapis.com`) | VMs, attached disks, unattached disks | No VM or disk data collected for that project |
+    | Cloud SQL Admin API (`sqladmin.googleapis.com`) | Cloud SQL instances, databases, storage | No Cloud SQL data collected for that project |
+    | Cloud Spanner API (`spanner.googleapis.com`) | Spanner instances, databases, node counts | No Spanner data collected for that project |
+    | BigQuery API (`bigquery.googleapis.com`) | Datasets, tables/views, sizes, external table sources, labels | No BigQuery data collected for that project |
+
+    The script automatically detects which APIs are enabled per project. If an API is not enabled, the script skips that service and displays a warning — it will not prompt or fail. To enable an API, run:
+    ```shell
+    gcloud services enable compute.googleapis.com --project=PROJECT_ID
+    gcloud services enable sqladmin.googleapis.com --project=PROJECT_ID
+    gcloud services enable spanner.googleapis.com --project=PROJECT_ID
+    gcloud services enable bigquery.googleapis.com --project=PROJECT_ID
+    ```
+
+    > **Note:** BigQuery collection uses the `bq` CLI in addition to `gcloud`. The `bq` CLI is included with the [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) — no separate installation is required. If `bq` is missing after installing the SDK (e.g. minimal install), run:
+    > ```shell
+    > gcloud components install bq
+    > ```
+
+### Running the GCP Script
+
+1. **From GCP Cloud Shell:**
+    - Open [GCP Cloud Shell](https://cloud.google.com/shell) — authentication is pre-configured automatically.
+    - Verify access:
+        ```powershell
+        gcloud auth list
+        gcloud config list
+        gcloud projects list
+        ```
+    - Start PowerShell:
+        ```shell
+        pwsh
+        ```
+    - Run the script:
+        ```powershell
+        .\Get-GCPSizingInfo.ps1
+        ```
+
+2. **From a local machine:**
+    - Install [PowerShell 7](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell).
+    - Install the [gcloud CLI](https://cloud.google.com/sdk/docs/install). On Windows, **close and reopen
+      your PowerShell window after install** so the updated `PATH` is picked up — otherwise `gcloud` will
+      not be recognized. Then run:
+        ```shell
+        gcloud init
+        gcloud auth login
+        ```
+    - Verify access:
+        ```powershell
+        gcloud auth list
+        gcloud config list
+        gcloud projects list
+        ```
+    - Run the script:
+        ```powershell
+        .\Get-GCPSizingInfo.ps1
+        ```
+
+3. The script will output a summary to the console and create a zip file with CSV files for VMs, disks, Cloud SQL instances, Spanner instances, and BigQuery datasets, along with a LOG of the console output. Please download the ZIP file and send it to your Rubrik representative.
+
+**Output files:**
+- `gce_vm_info-<timestamp>.csv` - GCE VM information
+- `gce_attached_disk_info-<timestamp>.csv` - Attached disk information
+- `gce_unattached_disk_info-<timestamp>.csv` - Unattached disk information
+- `gce_cloudsql_info-<timestamp>.csv` - Cloud SQL instance information
+- `gce_spanner_info-<timestamp>.csv` - Spanner instance information
+- `gce_bigquery_info-<timestamp>.csv` - BigQuery table/view information (one row per table)
+  - Dataset labels appear as `Label/Tag: dataset_<key>` columns and table labels as `Label/Tag: <key>`. A table label named `dataset_<key>` maps to the same column as the dataset label `<key>`; the table value is kept and the script prints a warning.
+  - A table with several external source URIs lists them separated by `; ` in `ExternalSourceUri`.
+- `output_gcp_<timestamp>.log` - Console output log
+
+**Size columns and units:**
+- **Compute Engine (VM and disk CSVs):** Google defines Compute Engine "GB" as binary (1 GB = 2^30 bytes), so the `sizeGb` value the API returns is already GiB ([Compute Engine disk and image pricing](https://cloud.google.com/compute/disks-image-pricing)). `SizeGb` holds that value as returned (`TotalDiskSizeGb` and `EncryptedDisksSizeGb` are sums of it across a VM's disks), and `SizeTb` (and the other `...Tb` columns) is the same number divided by 1000. `SizeGiB` equals `SizeGb`, and `SizeTiB` is `SizeGiB` divided by 1024. So `SizeTb` and `SizeTiB` differ by design; use the `...GiB` and `...TiB` columns for binary units and do not read `SizeGb` as decimal gigabytes.
+- **Cloud SQL:** `StorageSizeGb` is `dataDiskSizeGb` as returned, and `StorageSizeTb` is that value divided by 1000. Google does not define whether `dataDiskSizeGb` is decimal or binary, so the Cloud SQL CSV has no GiB or TiB columns.
+- **BigQuery:** Sizes come from byte counts, so the `...Gb` and `...Tb` columns are decimal and the `...GiB` and `...TiB` columns are binary.
+
+**BigQuery run time:** The script runs one `bq show` call per table, one after another, so a project with thousands of tables can take a long time. There is no timeout, and progress is shown per dataset, not per table, so a large dataset can look stalled while it is still working. Run the script from a session that will not disconnect. To skip BigQuery collection, add `-SkipBigQuery`; the BigQuery CSV is still created, but it is empty.
+
+### GCP Troubleshooting
+
+#### Script reports 0 projects (no other errors visible)
+
+- Problem:
+
+  In v1.0.2 and earlier the script completed without crashing but reported 0 projects discovered with
+  no explanation, because `gcloud` stderr was suppressed during project discovery. Starting in v1.0.3
+  (refined in v1.0.4) the script prints the captured `gcloud` stderr and a numbered list of common
+  causes, then halts — use that output together with the checklist below to diagnose. If `gcloud` is
+  missing from `PATH` entirely, v1.0.3+ throws a separate fail-fast error before reaching project
+  discovery, so that case never produces the "0 projects" symptom.
+
+- Most likely causes (check in this order):
+
+  1. **Not authenticated, or authenticated as the wrong account.** Run `gcloud auth list` — confirm the
+     active account belongs to the Cloud Identity organization, not a personal Google account. Re-run
+     `gcloud auth login` if needed.
+  2. **Caller lacks `resourcemanager.projects.list` at org / folder scope.** Direct project-level
+     `roles/viewer` is not enough — `gcloud projects list` returns empty if the principal has no listing
+     permission at any ancestor. Run `gcloud projects list` manually to confirm; if it returns nothing,
+     the sizing script cannot see them either.
+  3. **Cloud Resource Manager API disabled on the quota / auth project.** Enable it with
+     `gcloud services enable cloudresourcemanager.googleapis.com --project=<quota-project>`.
+
+  As a workaround while diagnosing, pass the project IDs explicitly to bypass auto-discovery — either
+  inline with `-Projects`, or from a newline-separated file with `-ProjectFile`:
+  ```powershell
+  .\Get-GCPSizingInfo.ps1 -Projects 'project-id-1,project-id-2'
+  .\Get-GCPSizingInfo.ps1 -ProjectFile path\to\projects.txt
+  ```
+
+---
+
+## Anonymization Feature
+
+The anonymization feature allows you to anonymize specific fields in the output to protect sensitive information. You can use the flags on any/all the 3 AWS/Azure/GCP scripts.
+
+- Use the tag `-Anonymize`. Fields anonymized by default are as follows:
+
+    - **AWS:** "AwsAccountId", "AwsAccountAlias", "BucketName", "Name", "InstanceId", "VolumeId", "RDSInstance", "DBInstanceIdentifier", "FileSystemId", "FileSystemDNSName", "FileSystemOwnerId", "OwnerId", "RuleId", "RuleName", "BackupPlanArn", "BackupPlanId", "VersionId", "RequestId"
+    - **GCP:** "Name", "Project", "VMName", "DiskName", "Id", "DiskEncryptionKey", "InstanceName", "DisplayName"
+    - **Azure:** "SubscriptionId", "Subscription", "Tenant", "Name", "ResourceGroup", "VirtualMachineId", "PolicyId", "ProtectionPolicyName", "Id", "SourceResourceId", "ContainerName", "FriendlyName", "ServerName", "ParentName", "ProtectedItemDataSourceId", "StorageAccount", "Database", "Server", "ElasticPool", "ManagedInstance", "DatabaseID", "vmID"
+
+- To customize anonymization:
+    - Anonymize additional fields: `-AnonymizeFields "NewField1,NewField2"`
+    - To not anonymize certain fields: `-NotAnonymizeFields "Name,Id"`
+ 
+- A CSV file corresponding each anonymized key to value is outputted when you run any of the 3 scripts. Note this will not be contained in the ZIP file, and is only outside the ZIP file. This will help you correspond the numbers outputted to the resources, even if you choose to send anonymized data to Rubrik.
+
+- The output log will also not be in the ZIP; the output log will be created outside the ZIP, and one can manually 'clean/sanitize' sensitive information from that log before sending it to one's Rubrik representative.
+
+---
+
+## FAQ
+
+### How do I get started with AWS Organizations and AWS SSO?
+
+For detailed instructions on setting up AWS Organizations and AWS SSO, refer to official AWS documentation.
+
+### What IAM permissions are required for running the scripts?
+
+Ensure the respective IAM permissions as outlined in the script prerequisites section for each cloud provider.
+
+### How do I run the script with custom settings, such as using AWS SSO or querying certain regions?
+
+One can read the detailed parameter list and how to interact with them in the documentation at the top of each script. There are also examples provided of how to use these parameters to customize your data query.
+
+### How can I verify my current cloud context?
+
+- **GCP:** 
+    ```shell
+    gcloud auth list
+    gcloud config list
+    ```
+- **Azure:** 
+    ```powershell
+    Connect-AzAccount
+    ```
+- **AWS:** 
+    ```powershell
+    Set-AWSCredential -AccessKey 'YourAccessKey' -SecretKey 'YourSecretKey' -Region 'YourRegion'
+    ```
+
+For any further queries or issues, refer to the detailed documentation at the top of each script or contact your Rubrik representative.

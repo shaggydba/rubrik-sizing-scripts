@@ -181,8 +181,11 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
+-- v$datafile can use the containers clause
+-- this query returns the total space ALLOCATED to each container
 UPDATE rubrikDataCollection rbk
 SET allocated_dbSizeTB = (select round(sum(bytes)/1024/1024/1024/1024,6) bytes from containers(v$datafile) where con_id=rbk.con_id group by con_id)
+SET allocated_dbSizeMB = (select sum(bytes/1024/1024) bytes from containers(v$datafile) where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
@@ -207,6 +210,7 @@ SET GoldenGate = (select decode(count(*), 0, 'NO', 'YES') from v$archive_dest wh
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance);
 
+-- this query addresses GoldenGate for each container
 UPDATE rubrikDataCollection rbk
 SET GoldenGate = (select decode(count(*), 0, 'NO', 'YES') from v$archive_dest where status = 'VALID' and target = 'STANDBY' and con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
@@ -220,6 +224,7 @@ SET exadataEnabled = (select decode(count(*), 0, 'NO', 'YES') from v$cell where 
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance);
 
+-- this query addresses Exadata for each container (overkill)
 UPDATE rubrikDataCollection rbk
 SET exadataEnabled = (select decode(count(*), 0, 'NO', 'YES') from v$cell where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
@@ -238,6 +243,7 @@ SET LogArchiveConfig = (SELECT value from v$parameter where name='log_archive_co
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance);
 
+-- Need to explicitly set a value for LogArchiveConfig is the previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET LogArchiveConfig = 'NO'
 WHERE instName = (select instance_name from v$instance)
@@ -270,6 +276,7 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
+-- need to explicitly set encryptedDataSizeMB if previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET encryptedDataSizeTB = 0
 WHERE instName = (select instance_name from v$instance)
@@ -289,6 +296,7 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
+-- need to explicitly set biggestBigfileMB if the previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET biggestBigfileGB = 0
 WHERE instName = (select instance_name from v$instance)
@@ -301,6 +309,7 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
+-- need to explicitly set the bigfileDataSizeMB if the previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET bigfileDataSizeGB = 0
 WHERE instName = (select instance_name from v$instance)
@@ -312,6 +321,7 @@ and bigfileDataSizeGB is null;
 -- 20230321 changed the denominator from allocated space (v$datafile) to actual used space
 -- (cdb_segments), so this reflects the pct of real data that changes daily, not allocated
 -- space that may never be touched -- smcelhinney
+-- 20230321 updated change rate calculations to leverage cdb_segments to determine actual space USED instead of ALLOCATED -  smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyChangeRate = (select dailyChangeRate from (select sgmt.con_id, round((avg(redo_size)/sum(sgmt.bytes)),8) dailyChangeRate from containers(cdb_segments) sgmt, (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from containers(v$archived_log) where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by sgmt.con_id) where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
@@ -369,6 +379,7 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and rbk.con_id=1;
 
+-- need to explicitly set tempfileCount if the previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET tempfileCount = 0
 WHERE instName = (select instance_name from v$instance)
@@ -376,19 +387,23 @@ and hostName= (select host_name from v$instance)
 and tempfileCount is null;
 
 -- v$archived_log is container-aware (no need for container clause)
+-- 20230322 - updating query to return dailyRedoSize in MB - smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = (select round(dailyRedoSizeTB/1024/1024/1024/1024,6) from (select con_id, avg(redo_size) dailyRedoSizeTB from (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by con_id) where con_id=rbk.con_id)
+SET dailyRedoSize = (select dailyRedoSize from (select con_id, avg(redo_size/1024/1024) dailyRedoSize from (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by con_id) where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
 -- as Multitenant instance won't have con_id=0, the result will be add into the root container (con_id=1)
+-- 20230322 - updating query to return dailyRedoSize in MB - smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = (select round(dailyRedoSizeTB/1024/1024/1024/1024,6) from (select con_id, avg(redo_size) dailyRedoSizeTB from (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by con_id) where con_id=0)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and rbk.con_id=1;
 
+-- need to explicitly set dailyRedoSize if the previous query return a null value
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = 0
 WHERE instName = (select instance_name from v$instance)
