@@ -22,6 +22,8 @@
 #
 # dataCollector.sh -- This script will verify the existence of SQL*Plus, read through collectioInput.lst, execute rbkDataCollection.sql, and write the rbkDiscovery-v2.csv header once at the start of a fresh collection run. At runtime, user will be prompted to enter the SYSTEM password for the associated databases. Output from the sql queries are appended to rbkDiscovery-v2.csv, which is what your Rubrik Sales Engineer will require to help with sizing.
 #
+# dataCollector.ps1 -- Windows (PowerShell) equivalent of dataCollector.sh. Same input file, same sql scripts, same rbkDiscovery-v2.csv output, and the same SYSTEM password prompt per database (read as a SecureString and passed to SQL*Plus over stdin, never on the command line). Use it when the machine running the collection is Windows. The OS the databases run on does not matter for either script: both connect over the network, so either collector works against Oracle on Windows, Linux, or Unix.
+#
 # Execution Steps:
 # 1 - Update collectionInput.lst file with all Oracle databases that will be integrated with Rubrik. Enter the hostname, databasePort, ORACLE_SID and version for each instance or CDB (please check the expected format in collectionInput.lst-EXAMPLE file). If you utilizes PDB's in 12c+, the script will gather information for all PDBs that are installed in the CDB, plus one extra rollup row (CON_ID=0, CONNAME = the CDB name) summarizing the whole CDB as a single database -- CON_ID=0 identifies exactly one row per database, whether it's a CDB or a standalone (11g-style) instance. If you utilizes RAC cluster, please add the instances of one node only.
 #
@@ -30,6 +32,17 @@
 # 3 - Execute dataCollector.sh from an interactive terminal session (not cron, or ssh without a pty) and provide the SYSTEM password when prompted for each database listed in collectionInput.lst. The password is read directly from the terminal and is never passed on a command line or logged.
 #
 # 4 - Compress the resulting rbkDiscovery-v2.csv & work with your Rubrik Sales Engineer to transfer the file to them via the most secure mechanism available.
+#
+# Running on Windows:
+# Prerequisites: Windows PowerShell 5.1 or PowerShell 7+, and SQL*Plus -- either a full Oracle client/database home, or Oracle Instant Client (Basic + SQL*Plus packages) -- plus network access to each database listener.
+# 1 - Update collectionInput.lst exactly as in step 1 above; the format is identical.
+# 2 - Open an interactive PowerShell window and run, from the ORACLE folder:
+#       powershell -ExecutionPolicy Bypass -File .\dataCollector.ps1
+#     If sqlplus.exe is not on the PATH or under %ORACLE_HOME%, you will be prompted for its folder, or pass it up front:
+#       powershell -ExecutionPolicy Bypass -File .\dataCollector.ps1 -SqlPlusPath C:\oracle\instantclient_19_21
+# 3 - Enter the SYSTEM password when prompted for each database. On Windows, a password containing a double quote (") or a non-ASCII character is rejected up front, since it cannot be passed to the CONNECT command safely.
+# 4 - Send rbkDiscovery-v2.csv as in step 4 above. A Windows run writes CRLF line endings; a dataCollector.sh run writes LF.
+# NOTE: the duplicate-row check compares hosts by short name and ignores case, because Windows databases typically report v$instance.host_name as an upper-case short name (e.g. DBHOST01) even when collectionInput.lst uses a lower-case FQDN.
 #
 ##########
 #
@@ -40,6 +53,10 @@
 #   rbkDiscovery.csv files from earlier runs are not renamed automatically.
 # - Starting with v2.3, all output from these scripts will be managed by an Oracle sizing Claude
 #   Cowork skill.
+# - Added dataCollector.ps1, a PowerShell collector for running the collection from a Windows
+#   machine. It uses the same collectionInput.lst, rbkDataCollection*.sql scripts, and
+#   rbkDiscovery-v2.csv output as dataCollector.sh; the sql scripts are unchanged.
+# - Added .gitattributes to keep dataCollector.sh LF and dataCollector.ps1 CRLF on checkout.
 #
 ##########
 #
