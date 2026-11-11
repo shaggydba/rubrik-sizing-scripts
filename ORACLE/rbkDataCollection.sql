@@ -275,7 +275,7 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
--- need to explicitly set encryptedDataSizeMB if previous query returns a null value
+-- need to explicitly set encryptedDataSizeTB if previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET encryptedDataSizeTB = 0
 WHERE instName = (select instance_name from v$instance)
@@ -295,7 +295,7 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
--- need to explicitly set biggestBigfileMB if the previous query returns a null value
+-- need to explicitly set biggestBigfileGB if the previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET biggestBigfileGB = 0
 WHERE instName = (select instance_name from v$instance)
@@ -308,7 +308,7 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
--- need to explicitly set the bigfileDataSizeMB if the previous query returns a null value
+-- need to explicitly set the bigfileDataSizeGB if the previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET bigfileDataSizeGB = 0
 WHERE instName = (select instance_name from v$instance)
@@ -320,7 +320,6 @@ and bigfileDataSizeGB is null;
 -- 20230321 changed the denominator from allocated space (v$datafile) to actual used space
 -- (cdb_segments), so this reflects the pct of real data that changes daily, not allocated
 -- space that may never be touched -- smcelhinney
--- 20230321 updated change rate calculations to leverage cdb_segments to determine actual space USED instead of ALLOCATED -  smcelhinney
 -- NOTE: dailyChangeRate is based on USED redo, i.e. the average daily volume of redo actually
 -- generated and archived over the last 7 days (v$archived_log blocks*block_size), divided by
 -- used segment space (cdb_segments). This gives a more accurate picture of real redo
@@ -390,7 +389,7 @@ and hostName= (select host_name from v$instance)
 and tempfileCount is null;
 
 -- v$archived_log is container-aware (no need for container clause)
--- 20230322 - updating query to return dailyRedoSize in MB - smcelhinney
+-- 20230322 - dailyRedoSize query originally changed to report MB; since v2.0 it reports TB (dailyRedoSizeTB) - smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = (select round(dailyRedoSizeTB/1024/1024/1024/1024,6) from (select con_id, avg(redo_size) dailyRedoSizeTB from (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by con_id) where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
@@ -398,14 +397,14 @@ and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
 -- as Multitenant instance won't have con_id=0, the result will be add into the root container (con_id=1)
--- 20230322 - updating query to return dailyRedoSize in MB - smcelhinney
+-- 20230322 - dailyRedoSize query originally changed to report MB; since v2.0 it reports TB (dailyRedoSizeTB) - smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = (select round(dailyRedoSizeTB/1024/1024/1024/1024,6) from (select con_id, avg(redo_size) dailyRedoSizeTB from (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by con_id) where con_id=0)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and rbk.con_id=1;
 
--- need to explicitly set dailyRedoSize if the previous query return a null value
+-- need to explicitly set dailyRedoSizeTB if the previous query returns a null value
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = 0
 WHERE instName = (select instance_name from v$instance)

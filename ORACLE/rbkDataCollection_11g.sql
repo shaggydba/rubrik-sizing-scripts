@@ -255,7 +255,7 @@ and hostName= (select host_name from v$instance)
 and bigfileDataSizeGB is null;
 
 -- 20220310 smcelhinney removing division by 100 from dailyChangeRate as it negatively skews change rate
--- 20230321 updated change rate calculations to leverage cdb_segments to determine actual space USED instead of ALLOCATED -  smcelhinney
+-- 20230321 updated change rate calculations to leverage dba_segments to determine actual space USED instead of ALLOCATED -  smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyChangeRate = (select dailyChangeRate from (select round((avg(redo_size)/sum(sgmt.bytes)),8) dailyChangeRate from dba_segments sgmt, (select trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time))))
 WHERE instName = (select instance_name from v$instance)
@@ -281,7 +281,7 @@ SET tempfileCount = (select count(*) from v$tempfile)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance);
 
--- 20230322 - updating query to return dailyRedoSize in MB - smcelhinney
+-- 20230322 - dailyRedoSize query originally changed to report MB; since v2.0 it reports TB (dailyRedoSizeTB) - smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = (select round(dailyRedoSizeTB/1024/1024/1024/1024,6) from (select avg(redo_size) dailyRedoSizeTB from (select trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time))))
 WHERE instName = (select instance_name from v$instance)
