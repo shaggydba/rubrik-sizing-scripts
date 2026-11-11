@@ -181,6 +181,7 @@ WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
+-- 20230322 - updated query to use containers clause
 UPDATE rubrikDataCollection rbk
 SET allocated_dbSizeTB = (select round(sum(bytes)/1024/1024/1024/1024,6) bytes from containers(v$datafile) where con_id=rbk.con_id group by con_id)
 WHERE instName = (select instance_name from v$instance)
@@ -380,6 +381,7 @@ and hostName= (select host_name from v$instance)
 and tempfileCount is null;
 
 -- v$archived_log is container-aware (no need for container clause)
+-- 20230322 - updating query to return dailyRedoSize in MB - smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = (select round(dailyRedoSizeTB/1024/1024/1024/1024,6) from (select con_id, avg(redo_size) dailyRedoSizeTB from (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by con_id) where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
@@ -387,6 +389,7 @@ and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
 
 -- as Multitenant instance won't have con_id=0, the result will be add into the root container (con_id=1)
+-- 20230322 - updating query to return dailyRedoSize in MB - smcelhinney
 UPDATE rubrikDataCollection rbk
 SET dailyRedoSizeTB = (select round(dailyRedoSizeTB/1024/1024/1024/1024,6) from (select con_id, avg(redo_size) dailyRedoSizeTB from (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by con_id) where con_id=0)
 WHERE instName = (select instance_name from v$instance)

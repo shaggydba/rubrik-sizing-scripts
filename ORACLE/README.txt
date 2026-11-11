@@ -58,8 +58,8 @@
 #   v$datafile (unlike dba_segments) is reliably container-aware from root without it.
 # - Confirmed functional on non-CDB databases as well as CDBs: the cdb_segments change in
 #   rbkDataCollection.sql, _121.sql, and _12c.sql also returns correct sizes when run against a
-#   12c+ non-CDB. rbkDataCollection_11g.sql is unchanged and still uses dba_segments, since
-#   11g has no cdb_* views.
+#   12c+ non-CDB. rbkDataCollection_11g.sql uses dba_segments instead of cdb_segments, since
+#   11g has no cdb_* views; its DAILYCHANGERATE denominator also uses dba_segments (used space).
 #
 ##########
 #

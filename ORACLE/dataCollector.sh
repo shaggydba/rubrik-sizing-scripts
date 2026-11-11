@@ -20,7 +20,7 @@
 # 	databaseHostname,dbPort,dbServiceName,dbRelease
 # 	a unique entry should exist for EACH database requiring data collection
 #
-# output: rbkDiscovery-v2.csv -- a comma separated list of critical database information required
+# output: rbkDiscovery-v2.csv -- a tab-delimited list of critical database information required
 # 	for properly sizing Oracle databases on Rubrik.
 #
 # additional files: rbkDataCollection.sql -- the sql file executed to collect database information
