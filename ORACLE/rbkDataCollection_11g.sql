@@ -308,7 +308,7 @@ set feedback off
 set pagesize 0
 set wrap off
 
-spool rbkDiscovery.csv append
+spool rbkDiscovery-v2.csv append
 
 select con_id ||chr(9)|| conName ||chr(9)|| dbSizeTB ||chr(9)|| allocated_dbSizeTB ||chr(9)||
         biggestBigfileGB ||chr(9)||

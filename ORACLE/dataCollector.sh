@@ -20,7 +20,7 @@
 # 	databaseHostname,dbPort,dbServiceName,dbRelease
 # 	a unique entry should exist for EACH database requiring data collection
 #
-# output: rbkDiscovery.csv -- a comma separated list of critical database information required
+# output: rbkDiscovery-v2.csv -- a comma separated list of critical database information required
 # 	for properly sizing Oracle databases on Rubrik.
 #
 # additional files: rbkDataCollection.sql -- the sql file executed to collect database information
@@ -28,7 +28,7 @@
 #####
 #
 # Version 2.0 Updates (2026-09-03):
-# - Writes the rbkDiscovery.csv header once at the start of a fresh collection run.
+# - Writes the rbkDiscovery-v2.csv header once at the start of a fresh collection run.
 # - Replaced the eval-based sqlplus connection string, which embedded the SYSTEM password
 #   directly on the command line and re-parsed it through the shell, with a CONNECT
 #   statement fed to sqlplus via stdin -- closes a command injection risk and keeps the
@@ -36,7 +36,7 @@
 # - Added WHENEVER SQLERROR EXIT SQL.SQLCODE plus an exit-code check so a bad password,
 #   host, or connection now reports which database failed instead of failing silently.
 # - Warns and asks for confirmation before re-collecting a host/SID that already has a row
-#   in rbkDiscovery.csv, rather than silently adding a duplicate row on a rerun.
+#   in rbkDiscovery-v2.csv, rather than silently adding a duplicate row on a rerun.
 # - Validates dbversion is numeric before selecting a sql script, and skips the entry with a
 #   clear message instead of silently falling through to the newest sql script.
 # - Removed the unnecessary use of cat, and quoted variable expansions throughout so paths
@@ -83,7 +83,7 @@ INPUT=collectionInput.lst
 if [ -s "$INPUT" ]
 then
 
-	OUTPUT=rbkDiscovery.csv
+	OUTPUT=rbkDiscovery-v2.csv
 
 	# write the header once per collection run; leaves an existing file's data untouched
 	if [ ! -s "$OUTPUT" ]
@@ -124,6 +124,9 @@ then
 		unset sql
 		#echo "-n Enter SYSTEM password for database "$sid" and press [ENTER]:"
 		#printf '%s' "Enter the SYSTEM Password for database "$sid" and press [ENTER]: "
+		# NOTE: the password is wrapped in double quotes in the CONNECT statement below,
+		# so a SYSTEM password that itself contains a double quote (") will break the
+		# CONNECT command and the collection for that database will fail.
 		echo "Enter SYSTEM password"
 		read -s passwd < /dev/tty
 

@@ -467,7 +467,7 @@ set feedback off
 set pagesize 0
 set wrap off
 
-spool rbkDiscovery.csv append
+spool rbkDiscovery-v2.csv append
 
 -- select * from rubrikDataCollection;
 

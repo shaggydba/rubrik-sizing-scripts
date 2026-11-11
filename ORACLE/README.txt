@@ -17,18 +17,43 @@
 # where databaseRelease is in a 3 digit format representing MAJOR and DOT release. For example: 10gR2 -> 102; 11gR2 -> 112; 12cR1 -> 121 etc.
 # save this file after update as it will be an input for the shell script.
 #
-# rbkDataCollection.sql -- sql script that collects pertinent database information to assist with sizing Rubrik for Oracle and dump output to a tab-delimited file named rbkDiscovery.csv. Fields are tab-delimited (not comma) since several collected values, such as LOGARCHIVECONFIG and PATCHLEVEL, can legitimately contain commas.
+# rbkDataCollection.sql -- sql script that collects pertinent database information to assist with sizing Rubrik for Oracle and dump output to a tab-delimited file named rbkDiscovery-v2.csv. Fields are tab-delimited (not comma) since several collected values, such as LOGARCHIVECONFIG and PATCHLEVEL, can legitimately contain commas.
 #
-# dataCollector.sh -- This script will verify the existence of SQL*Plus, read through collectioInput.lst, execute rbkDataCollection.sql, and write the rbkDiscovery.csv header once at the start of a fresh collection run. At runtime, user will be prompted to enter the SYSTEM password for the associated databases. Output from the sql queries are appended to rbkDiscovery.csv, which is what your Rubrik Sales Engineer will require to help with sizing.
+# dataCollector.sh -- This script will verify the existence of SQL*Plus, read through collectioInput.lst, execute rbkDataCollection.sql, and write the rbkDiscovery-v2.csv header once at the start of a fresh collection run. At runtime, user will be prompted to enter the SYSTEM password for the associated databases. Output from the sql queries are appended to rbkDiscovery-v2.csv, which is what your Rubrik Sales Engineer will require to help with sizing.
 #
 # Execution Steps:
 # 1 - Update collectionInput.lst file with all Oracle databases that will be integrated with Rubrik. Enter the hostname, databasePort, ORACLE_SID and version for each instance or CDB (please check the expected format in collectionInput.lst-EXAMPLE file). If you utilizes PDB's in 12c+, the script will gather information for all PDBs that are installed in the CDB, plus one extra rollup row (CON_ID=0, CONNAME = the CDB name) summarizing the whole CDB as a single database -- CON_ID=0 identifies exactly one row per database, whether it's a CDB or a standalone (11g-style) instance. If you utilizes RAC cluster, please add the instances of one node only.
 #
-# 2 - Ensure you have the SYSTEM password for all databases referenced in collectionInput.lst file. 
+# 2 - Ensure you have the SYSTEM password for all databases referenced in collectionInput.lst file. NOTE: a SYSTEM password containing a double quote (") will break the CONNECT command and the collection for that database will fail. Use a password without a double quote, or temporarily change the password for the collection run.
 #
 # 3 - Execute dataCollector.sh from an interactive terminal session (not cron, or ssh without a pty) and provide the SYSTEM password when prompted for each database listed in collectionInput.lst. The password is read directly from the terminal and is never passed on a command line or logged.
 #
-# 4 - Compress the resulting rbkDiscovery.csv & work with your Rubrik Sales Engineer to transfer the file to them via the most secure mechanism available.
+# 4 - Compress the resulting rbkDiscovery-v2.csv & work with your Rubrik Sales Engineer to transfer the file to them via the most secure mechanism available.
+#
+##########
+#
+# Changes since 2.2 (2026-11-11):
+#
+# - Renamed the output file from rbkDiscovery.csv to rbkDiscovery-v2.csv. dataCollector.sh, all
+#   four rbkDataCollection*.sql variants, and this README now use the new name. Existing
+#   rbkDiscovery.csv files from earlier runs are not renamed automatically.
+#
+##########
+#
+# Analysis workbook (rbkDiscovery_Analysis_Template.xlsx) Updates:
+#
+# - 2026-11-09: Updated the template workbook. The commit only changed the file and its message
+#   does not describe the changes; add details here.
+# - 2026-09-14: Reworked the Summary layout. Removed the CDBs and RAC-enabled columns from
+#   Footprint and removed the Edition mix section. Added RAC and DataGuard counts to Feature
+#   adoption; DataGuard is detected from LOGARCHIVECONFIG entries containing DG_CONFIG=().
+#   Removed the By Host tab, and Summary's Distinct hosts now reads RawData directly. Added a
+#   DB_DAILY_CHANGE_RATE helper column to RawData (DAILYREDOSIZETB / ALLOCATED_DBSIZETB, CON_ID=0
+#   rows only).
+# - 2026-09-10: Added the workbook. It aggregates rbkDiscovery.csv into sizing KPIs: footprint,
+#   storage, daily change, non-compressible summary, extremes, feature adoption, and edition mix.
+#   Every calculation uses the CON_ID=0 rollup rows where needed, so a CDB's root and PDB rows
+#   are not double-counted.
 #
 ##########
 #
@@ -45,6 +70,10 @@
 #   of pct of allocated-but-possibly-empty space. ALLOCATED_DBSIZETB's v$datafile query is
 #   also now wrapped in CONTAINERS() (where available) for consistency/defense, though
 #   v$datafile (unlike dba_segments) is reliably container-aware from root without it.
+# - Confirmed functional on non-CDB databases as well as CDBs: the cdb_segments change in
+#   rbkDataCollection.sql, _121.sql, and _12c.sql also returns correct sizes when run against a
+#   12c+ non-CDB. rbkDataCollection_11g.sql is unchanged and still uses dba_segments, since
+#   11g has no cdb_* views.
 #
 ##########
 #
@@ -68,6 +97,24 @@
 #
 # Version 2.0 Updates (2026-09-03):
 #
+# - COMPATIBILITY WARNING: version 2.0 changed the output format in two ways that are not
+#   backward compatible: (1) the field delimiter changed from comma to tab, and (2) several
+#   columns were renamed and now report different units (see the renames below). Output
+#   produced by any pre-2.0 version of these scripts will NOT load or convert correctly into
+#   the analysis workbook (rbkDiscovery_Analysis_Template.xlsx), which expects the 2.0+ tab-
+#   delimited layout and column names. Re-run data collection with the current scripts rather
+#   than trying to convert old output.
+#   Renamed columns:
+#     DBSIZEMB              -> DBSIZETB
+#     ALLOCATED_DBSIZEMB    -> ALLOCATED_DBSIZETB
+#     ENCRYPTEDDATASIZEMB   -> ENCRYPTEDDATASIZETB
+#     DAILYREDOSIZE         -> DAILYREDOSIZETB
+#     BIGGESTBIGFILEMB      -> BIGGESTBIGFILEGB
+#     BIGFILEDATASIZEMB     -> BIGFILEDATASIZEGB
+#     SGAMAXSIZE            -> SGAMAXSIZEGB
+#     SGATARGET             -> SGATARGETGB
+#     PGAAGGREGATETARGET    -> PGAAGGREGATETARGETGB
+#     PHYSMEMORY            -> PHYSMEMORYGB
 # - Changed the rbkDiscovery.csv field delimiter from comma to a tab character (chr(9)), since
 #   some collected values (e.g. LOGARCHIVECONFIG, PATCHLEVEL) can legitimately contain commas.
 #   Added SET DEFINE OFF to the SQL scripts so an "&" in a collected value is not treated as a
@@ -90,5 +137,13 @@
 #   password is now fed to sqlplus via a CONNECT statement over stdin, closing a command
 #   injection risk and keeping the password out of `ps` output. A failed connection now reports
 #   which database failed instead of failing silently.
+# - Added WHENEVER SQLERROR EXIT SQL.SQLCODE and an exit-code check, so SQL*Plus errors (such as a
+#   bad password) stop that database's collection.
+# - Warns and asks for confirmation before re-collecting a host/SID that already has a row in
+#   rbkDiscovery.csv, rather than silently adding a duplicate row on a rerun.
+# - Validates that dbversion is numeric before selecting a sql script, and skips the entry with a
+#   clear message instead of silently falling through to the newest sql script.
+# - Removed the unnecessary use of cat, and quoted variable expansions so paths and values
+#   containing spaces are handled correctly.
 #
 ##########
