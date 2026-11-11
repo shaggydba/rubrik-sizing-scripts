@@ -8,6 +8,7 @@
 #
 # Purpose:
 # This utility is designed to collect data from Oracle databases to assist with Rubrik solution sizing.
+# NOTE: Starting with v2.3, all output from this utility will be managed by an Oracle sizing Claude Cowork skill.
 # The utility will connect to the databases you define in collectionInput.lst and execute the appropriate rbkDataCollection.sql (based on your db version) to gather the data required 
 # to begin properly sizing your Rubrik solution for Oracle.
 #
@@ -37,23 +38,8 @@
 # - Renamed the output file from rbkDiscovery.csv to rbkDiscovery-v2.csv. dataCollector.sh, all
 #   four rbkDataCollection*.sql variants, and this README now use the new name. Existing
 #   rbkDiscovery.csv files from earlier runs are not renamed automatically.
-#
-##########
-#
-# Analysis workbook (rbkDiscovery_Analysis_Template.xlsx) Updates:
-#
-# - 2026-11-09: Updated the template workbook. The commit only changed the file and its message
-#   does not describe the changes; add details here.
-# - 2026-09-14: Reworked the Summary layout. Removed the CDBs and RAC-enabled columns from
-#   Footprint and removed the Edition mix section. Added RAC and DataGuard counts to Feature
-#   adoption; DataGuard is detected from LOGARCHIVECONFIG entries containing DG_CONFIG=().
-#   Removed the By Host tab, and Summary's Distinct hosts now reads RawData directly. Added a
-#   DB_DAILY_CHANGE_RATE helper column to RawData (DAILYREDOSIZETB / ALLOCATED_DBSIZETB, CON_ID=0
-#   rows only).
-# - 2026-09-10: Added the workbook. It aggregates rbkDiscovery.csv into sizing KPIs: footprint,
-#   storage, daily change, non-compressible summary, extremes, feature adoption, and edition mix.
-#   Every calculation uses the CON_ID=0 rollup rows where needed, so a CDB's root and PDB rows
-#   are not double-counted.
+# - Starting with v2.3, all output from these scripts will be managed by an Oracle sizing Claude
+#   Cowork skill.
 #
 ##########
 #
@@ -100,10 +86,9 @@
 # - COMPATIBILITY WARNING: version 2.0 changed the output format in two ways that are not
 #   backward compatible: (1) the field delimiter changed from comma to tab, and (2) several
 #   columns were renamed and now report different units (see the renames below). Output
-#   produced by any pre-2.0 version of these scripts will NOT load or convert correctly into
-#   the analysis workbook (rbkDiscovery_Analysis_Template.xlsx), which expects the 2.0+ tab-
-#   delimited layout and column names. Re-run data collection with the current scripts rather
-#   than trying to convert old output.
+#   produced by any pre-2.0 version of these scripts will NOT convert correctly into the 2.0+
+#   tab-delimited layout and column names that downstream analysis expects. Re-run data
+#   collection with the current scripts rather than trying to convert old output.
 #   Renamed columns:
 #     DBSIZEMB              -> DBSIZETB
 #     ALLOCATED_DBSIZEMB    -> ALLOCATED_DBSIZETB

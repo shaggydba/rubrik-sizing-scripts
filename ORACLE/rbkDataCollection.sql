@@ -312,6 +312,10 @@ and bigfileDataSizeGB is null;
 -- 20230321 changed the denominator from allocated space (v$datafile) to actual used space
 -- (cdb_segments), so this reflects the pct of real data that changes daily, not allocated
 -- space that may never be touched -- smcelhinney
+-- NOTE: dailyChangeRate is based on USED redo, i.e. the average daily volume of redo actually
+-- generated and archived over the last 7 days (v$archived_log blocks*block_size), divided by
+-- used segment space (cdb_segments). This gives a more accurate picture of real redo
+-- utilization than raw redo log size / allocated database size.
 UPDATE rubrikDataCollection rbk
 SET dailyChangeRate = (select dailyChangeRate from (select sgmt.con_id, round((avg(redo_size)/sum(sgmt.bytes)),8) dailyChangeRate from containers(cdb_segments) sgmt, (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from containers(v$archived_log) where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by sgmt.con_id) where con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
