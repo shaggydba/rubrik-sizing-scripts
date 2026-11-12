@@ -55,8 +55,51 @@
 #   Cowork skill.
 # - Added dataCollector.ps1, a PowerShell collector for running the collection from a Windows
 #   machine. It uses the same collectionInput.lst, rbkDataCollection*.sql scripts, and
-#   rbkDiscovery-v2.csv output as dataCollector.sh; the sql scripts are unchanged.
+#   rbkDiscovery-v2.csv output as dataCollector.sh; no sql script changes were needed for it.
 # - Added .gitattributes to keep dataCollector.sh LF and dataCollector.ps1 CRLF on checkout.
+# - Fixed DAILYCHANGERATE being blank on the CON_ID=0 rollup row in rbkDataCollection.sql,
+#   _121.sql, and _12c.sql. The rollup row is now calculated as the root container's
+#   DAILYREDOSIZETB (redo is only maintained at the root, and already covers the whole CDB)
+#   divided by the cumulative DBSIZETB of ALL pluggables (CON_ID>2, excluding CDB$ROOT and
+#   PDB$SEED -- the same population that DBSIZETB on the rollup row sums). A CDB with no PDBs
+#   plugged in yet reports 0.
+# - Fixed DAILYCHANGERATE being understated on the per-container (and 11g) rows. The query joined
+#   the segments view to the archived-log subquery with no join condition, so every segment row
+#   was paired with every daily-redo row: sum(bytes) was multiplied by the number of redo-day
+#   rows while avg(redo_size) was not, and the rate came out low by roughly that factor (about
+#   7x or more with the 7-day window). Segment bytes are now summed per container and the
+#   average daily redo is reduced to a single value before the two are divided. A container
+#   with zero segment bytes now reports blank instead of raising a divide-by-zero error.
+#   Applies to all four rbkDataCollection*.sql scripts. Expect DAILYCHANGERATE to be noticeably
+#   higher than in earlier versions for the same database; values collected before this change
+#   are not comparable.
+# - Tested against a 19c CDB with 8 PDBs (rbkDataCollection.sql and _12c.sql; the _121 and _11g
+#   scripts were not run). The CON_ID=0 DAILYCHANGERATE equals the root DAILYREDOSIZETB divided
+#   by the sum of the PDB DBSIZETB values, and the per-container rates are exactly 4x the
+#   pre-fix values, matching the number of redo-day rows the old join multiplied by.
+#
+# KNOWN LIMITATIONS (how to read DAILYCHANGERATE and DAILYREDOSIZETB):
+# - Use the CON_ID=0 row for the database-level change rate. Redo is not tracked per PDB:
+#   every v$archived_log row reports CON_ID=0, so a per-PDB redo figure cannot be collected.
+#   The per-container DAILYCHANGERATE rows are therefore the CDB-wide average daily redo divided
+#   by that container's own used space, NOT that container's own change rate. A small PDB
+#   will show a very high value, and the CDB$ROOT row (a tiny used size) is not meaningful.
+# - DAILYREDOSIZETB sums v$archived_log for every archive destination. A database that archives
+#   to a standby or a second local destination has one row per log per destination, so its redo
+#   is counted once per destination (twice with one standby). DAILYCHANGERATE is overstated by
+#   the same factor. Verified on the test CDB: 75 logs on dest_id 1 and 75 on dest_id 2 (a
+#   standby), identical sizes. Not yet fixed; the plan below addresses it.
+# - DAILYREDOSIZETB is a 7-day average rounded to 6 decimal places of TB (about 1 MB), so a
+#   low-redo database keeps few significant digits, and a peak-redo day cannot be seen.
+#
+# PLANNED FOR v2.3 (Oracle sizing Claude Cowork skill hand-off):
+# - The skill will calculate change rate itself from DBSIZETB (used segment space, collected for
+#   every container) and DAILYREDOSIZETB, so the formula can change without asking customers
+#   to re-run collection. Until then, treat the DAILYCHANGERATE column as informational.
+# - DAILYCHANGERATE is planned to be removed and replaced with better redo inputs: higher
+#   precision, a peak daily value, the number of days in the window, and redo counted for a
+#   single archive destination. This will be the next change to the output layout, made once
+#   alongside the skill.
 #
 ##########
 #

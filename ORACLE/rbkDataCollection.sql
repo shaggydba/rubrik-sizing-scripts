@@ -1,6 +1,22 @@
 REM Oracle Data Collection Script
 REM Version: 2.2
 REM
+REM Changes since 2.2 (2026-11-12):
+REM - Fixed dailyChangeRate being blank on the con_id=0 rollup row. It is now the root's
+REM   dailyRedoSizeTB (redo is only maintained at the root) divided by the cumulative dbSizeTB
+REM   of ALL pluggables (con_id>2, excluding CDB$ROOT and PDB$SEED), or 0 when the CDB has no
+REM   PDBs plugged in yet.
+REM - Fixed dailyChangeRate being understated on the per-container rows: the query joined
+REM   cdb_segments to the archived-log rows with no join condition, multiplying sum(bytes) by the
+REM   number of redo-day rows. Segment bytes are now summed per container and average daily redo
+REM   is a single value before dividing. A container with zero segment bytes now yields NULL.
+REM - KNOWN LIMITATIONS: (1) v$archived_log reports every row under con_id=0, so redo cannot be
+REM   split per PDB: per-container dailyChangeRate is CDB-wide redo over that container's used
+REM   space, not its own change rate -- use the con_id=0 row. (2) dailyRedoSizeTB counts every
+REM   archive destination, so a standby doubles it (and dailyChangeRate); not yet fixed.
+REM   (3) The 7-day average is rounded to 6 decimals of TB. Planned for v2.3: compute the rate in
+REM   the Cowork skill and replace dailyChangeRate with better redo inputs (see README).
+REM
 REM Version 2.2 Updates (2026-09-10):
 REM - Fixed dbSizeTB returning the same (wrong) value for every PDB in a CDB. It was built on
 REM   plain dba_segments, which is not container-spanning -- queried from root, every row it
@@ -324,8 +340,12 @@ and bigfileDataSizeGB is null;
 -- generated and archived over the last 7 days (v$archived_log blocks*block_size), divided by
 -- used segment space (cdb_segments). This gives a more accurate picture of real redo
 -- utilization than raw redo log size / allocated database size.
+-- Segment bytes are summed per container (s) and the CDB-wide average daily redo is a single
+-- value (r), so the two sides are joined 1:1 on rbk.con_id. The earlier form joined cdb_segments
+-- to the archived-log rows with no join condition, which multiplied sum(bytes) by the number of
+-- redo-day rows and understated the rate by roughly that factor.
 UPDATE rubrikDataCollection rbk
-SET dailyChangeRate = (select dailyChangeRate from (select sgmt.con_id, round((avg(redo_size)/sum(sgmt.bytes)),8) dailyChangeRate from containers(cdb_segments) sgmt, (select con_id, trunc(completion_time) rundate, sum(blocks*block_size) redo_size from containers(v$archived_log) where first_time > sysdate - 7 group by trunc(completion_time), con_id) group by sgmt.con_id) where con_id=rbk.con_id)
+SET dailyChangeRate = (select round(r.avgRedo / nullif(s.bytes, 0), 8) from (select con_id, sum(bytes) bytes from containers(cdb_segments) group by con_id) s, (select avg(redo_size) avgRedo from (select trunc(completion_time) rundate, sum(blocks*block_size) redo_size from containers(v$archived_log) where first_time > sysdate - 7 group by trunc(completion_time))) r where s.con_id=rbk.con_id)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance)
 and con_id=rbk.con_id;
@@ -471,6 +491,22 @@ update rubrikDataCollection rbk set bigfileTablespaceCount=0 where con_id=0 and 
 update rubrikDataCollection rbk set bigfileDataSizeGB=0 where con_id=0 and bigfileDataSizeGB is null;
 update rubrikDataCollection rbk set logfileCount=0 where con_id=0 and logfileCount is null;
 update rubrikDataCollection rbk set tempfileCount=0 where con_id=0 and tempfileCount is null;
+
+-- dailyChangeRate for the rollup row (con_id=0): redo is only maintained at the root, so the
+-- numerator is the root's dailyRedoSizeTB (the CDB-wide average daily used redo, con_id=1).
+-- The denominator is the cumulative used segment space across ALL pluggables (con_id>2,
+-- excluding CDB$ROOT and PDB$SEED), the same population the rollup's dbSizeTB sums. This
+-- sidesteps the segment/archived-log cartesian join used for the per-container rows. A CDB
+-- with no PDBs plugged in yet has no denominator, so it reports 0 like the other rollup columns.
+update rubrikDataCollection rbk
+set dailyChangeRate = (
+      select case when sum(pdb.dbSizeTB) > 0
+                  then round(max(root.dailyRedoSizeTB) / sum(pdb.dbSizeTB), 8)
+                  else 0 end
+      from rubrikDataCollection root, rubrikDataCollection pdb
+      where root.con_id = 1
+        and pdb.con_id > 2)
+where rbk.con_id = 0;
 
 commit;
 

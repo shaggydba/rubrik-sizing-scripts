@@ -1,6 +1,17 @@
 REM Oracle Data Collection Script
 REM Version: 2.0
 REM
+REM Changes since 2.0 (2026-11-12):
+REM - Fixed dailyChangeRate being understated: the query joined dba_segments to the archived-log
+REM   rows with no join condition, multiplying sum(bytes) by the number of redo-day rows. Segment
+REM   bytes and average daily redo are now each reduced to a single value before dividing. A
+REM   database with zero segment bytes now yields NULL instead of a divide-by-zero error.
+REM - KNOWN LIMITATIONS: (1) dailyRedoSize counts every archive destination, so a standby
+REM   doubles it (and dailyChangeRate); not yet fixed. (2) The 7-day average is rounded, so a
+REM   peak-redo day cannot be seen. Planned for v2.3: compute the rate in the Cowork skill and
+REM   replace dailyChangeRate with better redo inputs (see README). Not run against an 11g
+REM   database in this round of testing.
+REM
 REM Version 2.0 Updates (2026-09-03):
 REM - Output field delimiter changed from comma to a tab character (chr(9)); some collected
 REM   values (e.g. LogArchiveConfig, patchLevel) can legitimately contain commas.
@@ -256,8 +267,11 @@ and bigfileDataSizeGB is null;
 
 -- 20220310 smcelhinney removing division by 100 from dailyChangeRate as it negatively skews change rate
 -- 20230321 updated change rate calculations to leverage dba_segments to determine actual space USED instead of ALLOCATED -  smcelhinney
+-- Segment bytes (s) and average daily redo (r) are each reduced to a single value before they
+-- are combined. The earlier form joined dba_segments to the archived-log rows with no join
+-- condition, which multiplied sum(bytes) by the number of redo-day rows and understated the rate.
 UPDATE rubrikDataCollection rbk
-SET dailyChangeRate = (select dailyChangeRate from (select round((avg(redo_size)/sum(sgmt.bytes)),8) dailyChangeRate from dba_segments sgmt, (select trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time))))
+SET dailyChangeRate = (select round(r.avgRedo / nullif(s.bytes, 0), 8) from (select sum(bytes) bytes from dba_segments) s, (select avg(redo_size) avgRedo from (select trunc(completion_time) rundate, sum(blocks*block_size) redo_size from v$archived_log where first_time > sysdate - 7 group by trunc(completion_time))) r)
 WHERE instName = (select instance_name from v$instance)
 and hostName= (select host_name from v$instance);
 
